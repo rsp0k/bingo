@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { Trophy, Clock } from "lucide-react"
+import { creditUserPrize, calculatePrize, checkCardWinner as checkCardWinnerUtil } from "@/lib/prize-utils"
 
 interface AutomaticDrawEngineProps {
   drawId: string
@@ -199,19 +200,19 @@ export function AutomaticDrawEngine({ drawId, isActive }: AutomaticDrawEnginePro
         // IMPORTANTE: Só verifica o tipo de prêmio da fase atual
         if (currentPhase === "quadra") {
           cartela_vencedora = cartelasElegiveis.find(card => {
-            const result = checkCardWinner(card, currentDrawnNumbers);
+            const result = checkCardWinnerUtil(card, currentDrawnNumbers);
             return result === "quadra" || result === "quina" || result === "cheia";
           }) || null;
         } 
         else if (currentPhase === "quina") {
           cartela_vencedora = cartelasElegiveis.find(card => {
-            const result = checkCardWinner(card, currentDrawnNumbers);
+            const result = checkCardWinnerUtil(card, currentDrawnNumbers);
             return result === "quina" || result === "cheia";
           }) || null;
         }
         else if (currentPhase === "cheia") {
           cartela_vencedora = cartelasElegiveis.find(card => {
-            const result = checkCardWinner(card, currentDrawnNumbers);
+            const result = checkCardWinnerUtil(card, currentDrawnNumbers);
             return result === "cheia";
           }) || null;
         }
@@ -248,6 +249,23 @@ export function AutomaticDrawEngine({ drawId, isActive }: AutomaticDrawEnginePro
             
             const prize = calculatePrize(currentPhase, currentDraw);
             
+            // === CREDITAR SALDO DO USUÁRIO VENCEDOR ===
+            if (userData && prize > 0) {
+              const success = await creditUserPrize(
+                cartela_vencedora.userId,
+                prize,
+                currentPhase,
+                cartela_vencedora.id
+              );
+              
+              if (success) {
+                toast({
+                  title: "🎉 Prêmio Creditado!",
+                  description: `${userName} ganhou R$ ${prize.toFixed(2)} na ${currentPhase}!`,
+                });
+              }
+            }
+            
             const winner: Winner = {
               userId: cartela_vencedora.userId,
               userName,
@@ -276,51 +294,7 @@ export function AutomaticDrawEngine({ drawId, isActive }: AutomaticDrawEnginePro
     }
   };
 
-  const checkCardWinner = (card: BingoCard, drawnNumbers: number[]): "quadra" | "quina" | "cheia" | null => {
-    // Verificar se a cartela está cheia (todos os números marcados)
-    let totalMarked = 0;
-    card.numbers.forEach((number, index) => {
-      const row = Math.floor(index / 5);
-      const col = index % 5;
-      const isFree = col === 2 && row === 2;
-      if (isFree || drawnNumbers.includes(number)) {
-        totalMarked++;
-      }
-    });
-    if (totalMarked === 25) return "cheia";
 
-    // Verificar linhas para quina ou quadra
-    let foundQuina = false;
-    let foundQuadra = false;
-    for (let row = 0; row < 5; row++) {
-      let markedInRow = 0;
-      for (let col = 0; col < 5; col++) {
-        const index = row * 5 + col;
-        const number = card.numbers[index];
-        const isFree = col === 2 && row === 2;
-        if (isFree || drawnNumbers.includes(number)) {
-          markedInRow++;
-        }
-      }
-      if (markedInRow === 5) foundQuina = true;
-      else if (markedInRow === 4) foundQuadra = true;
-    }
-    if (foundQuina) return "quina";
-    if (foundQuadra) return "quadra";
-    return null;
-  }
-
-  const calculatePrize = (type: "quadra" | "quina" | "cheia", draw: Draw): number => {
-    if (draw.type === "fixed") {
-      const prizes = draw.prizes as { quadra: number; quina: number; cheia: number }
-      return prizes[type]
-    } else {
-      // Para sorteios acumulados, calcular baseado no total arrecadado
-      // Por simplicidade, usando valores fixos aqui
-      const baseValues = { quadra: 100, quina: 300, cheia: 1000 }
-      return baseValues[type]
-    }
-  }
 
   const getWinnerTypeBadge = (type: "quadra" | "quina" | "cheia") => {
     switch (type) {

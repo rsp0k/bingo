@@ -13,6 +13,7 @@ import type { Draw } from "@/lib/types"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { WinnerModal } from "@/components/WinnerModal"
+import { creditUserPrize, calculatePrize, checkCardWinner as checkCardWinnerUtil } from "@/lib/prize-utils"
 
 interface Winner {
   userId: string;
@@ -251,12 +252,13 @@ export default function AdminManageDrawPage() {
     const drawDoc = await getDoc(doc(db, "draws", drawId));
     const drawData = drawDoc.data();
     const updatedWinners = { ...(drawData?.winners || {}) } as Record<Winner["type"], string[]>;
+    const previousWinners = { ...updatedWinners };
 
     for (const cardDoc of cardsSnapshot.docs) {
       const card = { id: cardDoc.id, ...cardDoc.data() } as Card;
 
       // Função para checar tipo de vitória (quadra, quina, cheia)
-      const winnerType = checkCardWinner(card, currentDrawnNumbers);
+      const winnerType = checkCardWinnerUtil(card, currentDrawnNumbers);
 
       if (winnerType) {
         // Remover a cartela de todas as listas menores
@@ -286,17 +288,62 @@ export default function AdminManageDrawPage() {
     await updateDoc(doc(db, "draws", drawId), {
       winners: updatedWinners,
     });
+
+    // === CREDITAR SALDO DOS NOVOS VENCEDORES ===
+    await creditWinners(previousWinners, updatedWinners, drawData);
   };
 
-  // Função para checar vitória
-  const checkCardWinner = (card: Card, drawnNumbers: number[]): Winner["type"] | null => {
-    // Exemplo: cartela cheia
-    const marked = card.numbers.filter((n) => drawnNumbers.includes(n)).length;
-    if (marked === 25) return "cheia";
-    if (marked >= 20) return "quina";
-    if (marked >= 16) return "quadra";
-    return null;
+  const creditWinners = async (
+    previousWinners: Record<Winner["type"], string[]>, 
+    updatedWinners: Record<Winner["type"], string[]>, 
+    drawData: any
+  ) => {
+    const winnerTypes: Winner["type"][] = ["quadra", "quina", "cheia"];
+    
+    for (const type of winnerTypes) {
+      const previousCards = new Set(previousWinners[type] || []);
+      const currentCards = new Set(updatedWinners[type] || []);
+      
+      // Encontrar novos vencedores
+      const newWinners = Array.from(currentCards).filter(cardId => !previousCards.has(cardId));
+      
+      for (const cardId of newWinners) {
+        try {
+          // Buscar dados da cartela
+          const cardDoc = await getDoc(doc(db, "cards", cardId));
+          if (!cardDoc.exists()) continue;
+          
+          const cardData = cardDoc.data();
+          const userId = cardData.userId;
+          
+          // Buscar dados do usuário
+          const userDoc = await getDoc(doc(db, "users", userId));
+          if (!userDoc.exists()) continue;
+          
+          const userData = userDoc.data();
+          const userName = userData.name || "Usuário";
+          
+          // Calcular prêmio
+          const prize = calculatePrize(type, drawData);
+          
+          if (prize > 0) {
+            const success = await creditUserPrize(userId, prize, type, cardId);
+            
+            if (success) {
+              toast({
+                title: "🎉 Prêmio Creditado!",
+                description: `${userName} ganhou R$ ${prize.toFixed(2)} na ${type}!`,
+              });
+            }
+          }
+        } catch (error) {
+          console.error(`Erro ao creditar prêmio para cartela ${cardId}:`, error);
+        }
+      }
+    }
   };
+
+
 
   if (loading || loadingDraw) {
     return <div className="min-h-screen flex items-center justify-center">Carregando...</div>

@@ -7,6 +7,8 @@ export interface User {
   role: "user" | "admin"
   totalDeposited: number
   totalWithdrawn: number
+  totalWon?: number
+  lastWin?: Date
   createdAt: Date
 }
 
